@@ -7,6 +7,7 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use League\Flysystem\FileAttributes;
@@ -15,6 +16,7 @@ use PDO;
 use Riasath\R2Backup\Exceptions\BackupFailed;
 use Symfony\Component\Process\Exception\ExceptionInterface as ProcessException;
 use Symfony\Component\Process\Process;
+use Throwable;
 
 /**
  * Dumps the application database, compresses it, and uploads the result to
@@ -74,6 +76,10 @@ class BackupService
             throw BackupFailed::notConfigured($this->missingConfig());
         }
 
+        // Ask about the storage allowance before doing any work, so a full
+        // account fails in a second rather than after a long dump.
+        $this->guard()->check();
+
         $started = microtime(true);
         $name = $this->filename();
         $local = $this->tempPath($name);
@@ -88,6 +94,13 @@ class BackupService
             };
 
             $key = $this->key($name);
+            $bytes = filesize($local) ?: 0;
+
+            // The exact size is only knowable now. Re-check against it, from the
+            // cached reading, so a large dump cannot slip through on a figure
+            // that merely cleared the floor before the dump existed.
+            $this->guard()->check($bytes);
+
             $stream = fopen($local, 'rb');
 
             if ($stream === false) {
@@ -104,9 +117,16 @@ class BackupService
                 }
             }
 
-            $bytes = filesize($local) ?: 0;
+            // A pruning failure must not mask a backup that is already safely
+            // uploaded — the operator would retry a run that actually worked.
+            try {
+                $this->prune();
+            } catch (Throwable $e) {
+                Log::warning('R2 backup uploaded, but pruning old copies failed.', ['exception' => $e]);
+            }
 
-            $this->prune();
+            // The freshly uploaded object makes any cached usage reading stale.
+            $this->guard()->forget();
 
             return [
                 'name' => $name,
@@ -201,6 +221,15 @@ class BackupService
     public function disk(): FilesystemAdapter
     {
         return Storage::disk(config('r2-backup.disk', 'r2'));
+    }
+
+    /**
+     * The storage-allowance guard. Resolved lazily rather than injected, so
+     * `new BackupService` keeps working for anyone constructing it by hand.
+     */
+    public function guard(): FreeTierGuard
+    {
+        return app(FreeTierGuard::class);
     }
 
     /**
@@ -422,14 +451,18 @@ class BackupService
             return $bytes.' B';
         }
 
-        $units = ['KB', 'MB', 'GB', 'TB'];
+        $units = ['KB', 'MB', 'GB', 'TB', 'PB'];
         $value = $bytes;
+        $last = array_key_last($units);
 
-        foreach ($units as $unit) {
+        foreach ($units as $i => $unit) {
             $value /= 1024;
+            $rounded = round($value, $value < 10 ? 1 : 0);
 
-            if ($value < 1024) {
-                return round($value, $value < 10 ? 1 : 0).' '.$unit;
+            // Test the rounded figure, not the raw one: 1073741633 bytes is
+            // 1023.99 MB, which prints as "1024 MB" unless it is promoted here.
+            if ($rounded < 1024 || $i === $last) {
+                return $rounded.' '.$unit;
             }
         }
 

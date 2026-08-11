@@ -77,6 +77,17 @@
     .r2b__list { margin: 0.5rem 0 0; padding-left: 1.1rem; }
     .r2b__list li { margin-top: 0.2rem; }
 
+    .r2b__meter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;
+                  padding: 0.85rem 1rem; margin-bottom: 1.25rem; border-radius: 10px;
+                  border: 1px solid var(--r2b-border); background: var(--r2b-card); font-size: 0.8125rem; }
+    .r2b__meter-label { color: var(--r2b-muted); white-space: nowrap; }
+    .r2b__meter-track { flex: 1 1 12rem; height: 7px; border-radius: 999px;
+                        background: var(--r2b-soft); border: 1px solid var(--r2b-border); overflow: hidden; }
+    .r2b__meter-fill { display: block; height: 100%; background: var(--r2b-accent); border-radius: 999px; }
+    .r2b__meter--low .r2b__meter-fill { background: #dc2626; }
+    .r2b__meter--low .r2b__meter-value { color: var(--r2b-bad-fg); font-weight: 600; }
+    .r2b__meter-value { white-space: nowrap; }
+
     /* Visible to screen readers only — the actions column needs a name. */
     .r2b__sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
                overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -132,6 +143,26 @@
             </span>
         </div>
     @endunless
+
+    @if ($usage)
+        {{-- Storage allowance, shown only when the free-tier guard is on. --}}
+        @php
+            $threshold = (float) config('r2-backup.free_tier.threshold', 0.10);
+            $low = $usage->remainingRatio() < $threshold;
+        @endphp
+        <div class="r2b__meter {{ $low ? 'r2b__meter--low' : '' }}">
+            <span class="r2b__meter-label">R2 storage</span>
+            <span class="r2b__meter-track" role="img"
+                  aria-label="{{ $usage->usedPercent() }}% of the R2 storage allowance used">
+                <span class="r2b__meter-fill" style="width: {{ $usage->usedPercent() }}%"></span>
+            </span>
+            <span class="r2b__meter-value">
+                {{ BackupService::humanBytes($usage->used) }} of {{ BackupService::humanBytes($usage->limit) }}
+                — {{ BackupService::humanBytes($usage->remaining()) }} left
+                @if ($low) (below the {{ rtrim(rtrim(number_format($threshold * 100, 1), '0'), '.') }}% floor — backups are blocked) @endif
+            </span>
+        </div>
+    @endif
 
     @if ($listError)
         <div class="r2b__flash r2b__flash--bad" role="alert">

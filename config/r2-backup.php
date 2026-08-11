@@ -118,6 +118,63 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Free Tier Guard
+    |--------------------------------------------------------------------------
+    |
+    | R2's free tier covers 10 GB of stored data, charged account-wide. Turn
+    | this on and the package asks Cloudflare how much of that is already used
+    | before it dumps anything, refusing to run once the remaining headroom
+    | falls below 'threshold' — so an unattended nightly backup cannot quietly
+    | push you onto a paid bill.
+    |
+    | This needs a SECOND Cloudflare token, separate from the R2 credentials at
+    | the top of this file: dashboard → My Profile → API Tokens → Create Token,
+    | with "Account Analytics: Read". Your account ID is the <account-id> part
+    | of the R2 endpoint. S3 credentials cannot read usage.
+    |
+    | Cloudflare aggregates storage daily and lags writes by a few minutes, so
+    | treat the reading as a close estimate rather than a ledger.
+    |
+    */
+
+    'free_tier' => [
+
+        'enabled' => (bool) env('R2_FREE_TIER_CHECK', false),
+
+        'account_id' => env('CLOUDFLARE_ACCOUNT_ID'),
+        'api_token' => env('CLOUDFLARE_API_TOKEN'),
+
+        /*
+        | Gigabytes the allowance covers. Raise it on a paid plan to turn this
+        | into a spend ceiling of your own choosing rather than a free-tier one.
+        */
+        'limit_gb' => (float) env('R2_FREE_TIER_LIMIT_GB', 10),
+
+        /*
+        | Stop when less than this fraction of the allowance is left, counting
+        | the backup about to be uploaded. 0.10 is ten percent.
+        */
+        'threshold' => (float) env('R2_FREE_TIER_THRESHOLD', 0.10),
+
+        /*
+        | Seconds to reuse a reading. Cloudflare's numbers only move every few
+        | minutes, and one run checks twice. Set 0 to ask every time.
+        */
+        'cache_ttl' => (int) env('R2_FREE_TIER_CACHE_TTL', 300),
+
+        /*
+        | What to do when Cloudflare cannot be reached. A missed backup is worse
+        | than a few cents of overage, so by default an unreachable API logs a
+        | warning and lets the backup through. Set false to refuse instead.
+        */
+        'fail_open' => (bool) env('R2_FREE_TIER_FAIL_OPEN', true),
+
+        'timeout' => (int) env('R2_FREE_TIER_TIMEOUT', 10),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Web Interface
     |--------------------------------------------------------------------------
     |

@@ -38,6 +38,7 @@ class BackupController extends Controller
                 'missing' => $this->backups->missingConfig(),
                 'backups' => new Collection,
                 'listError' => null,
+                'usage' => null,
                 'bucket' => config('r2-backup.bucket'),
             ]);
         }
@@ -58,6 +59,9 @@ class BackupController extends Controller
             'missing' => [],
             'backups' => $backups,
             'listError' => $listError,
+            // Null whenever the guard is off or Cloudflare is unreachable; the
+            // view simply omits the meter rather than showing a broken one.
+            'usage' => $this->backups->guard()->usage(),
             'bucket' => config('r2-backup.bucket'),
         ]);
     }

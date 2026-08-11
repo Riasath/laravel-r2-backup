@@ -14,6 +14,8 @@ no local disk bloat, no `spatie/laravel-backup`-sized configuration surface.
   short-lived `0600` defaults file, not `argv`.
 - **Works on any S3-compatible store** — R2 by default, but point it at S3, Backblaze B2 or
   Wasabi with one config line.
+- **Free-tier guard** — optionally asks Cloudflare how much of your 10 GB allowance is left and
+  refuses to run below a threshold, so a nightly job can't quietly put you on a paid bill.
 
 ---
 
@@ -143,6 +145,49 @@ and it is enforced on every route:
 // app/Providers/AppServiceProvider.php — boot()
 Gate::define('run-backups', fn ($user) => in_array($user->role, ['admin', 'system_admin']));
 ```
+
+### Stopping before you overrun the free tier
+
+R2's free tier covers **10 GB of stored data, charged account-wide**. Turn the guard on and the
+package asks Cloudflare how much of that is already used *before* it dumps anything, and refuses
+to run once less than 10% of the allowance is left — so an unattended nightly backup cannot
+quietly push you onto a paid bill.
+
+This needs a **second Cloudflare token**, separate from your R2 credentials — S3 keys cannot read
+analytics. Dashboard → **My Profile → API Tokens → Create Token**, with **Account Analytics: Read**.
+
+```dotenv
+R2_FREE_TIER_CHECK=true
+CLOUDFLARE_ACCOUNT_ID=<the 32-char hex from your R2 endpoint>
+CLOUDFLARE_API_TOKEN=<the analytics token>
+```
+
+Optional knobs:
+
+```dotenv
+R2_FREE_TIER_LIMIT_GB=10      # raise on a paid plan to set your own spend ceiling
+R2_FREE_TIER_THRESHOLD=0.10   # stop when less than 10% is left
+R2_FREE_TIER_CACHE_TTL=300    # seconds to reuse a reading
+R2_FREE_TIER_FAIL_OPEN=true   # see below
+```
+
+The check runs **twice**: once before dumping, so a full account fails in a second rather than
+after a long dump; and again once the dump's exact size is known, so a large backup cannot slip
+through on a reading that merely cleared the floor. The second check reuses the cached figure, so
+a run still costs one API call.
+
+When the guard is on, the backup screen and `r2-backup:run` both show current usage.
+
+**On failure modes** — the two cases are deliberately different:
+
+| What went wrong | What happens |
+|---|---|
+| Cloudflare 5xx, timeout, DNS failure, metrics not aggregated yet | Respects `FAIL_OPEN`. Default `true`: logs a warning and **lets the backup through**, because a missed backup is worse than a few cents of overage. Set `false` to refuse instead. |
+| Bad token, missing `Account Analytics` permission, malformed account ID | **Always stops the run**, whatever `FAIL_OPEN` says. A guard that silently stops guarding is worse than one that stops the backup. |
+
+> Cloudflare aggregates storage daily and lags writes by a few minutes, so the reading is a close
+> estimate, not a ledger. It counts **every bucket on the account**, which is the point — a bucket
+> you forgot about still spends the same allowance.
 
 ### Matching your admin layout
 

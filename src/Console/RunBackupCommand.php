@@ -30,6 +30,8 @@ class RunBackupCommand extends Command
             return self::FAILURE;
         }
 
+        $this->showUsage($backups);
+
         if ($this->option('list')) {
             return $this->listBackups($backups);
         }
@@ -55,6 +57,39 @@ class RunBackupCommand extends Command
         $this->components->info('Uploaded to '.config('r2-backup.bucket').'/'.$result['key']);
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Report the storage allowance when the guard is switched on, so an
+     * operator can see the headroom shrinking before a run is refused.
+     */
+    protected function showUsage(BackupService $backups): void
+    {
+        $guard = $backups->guard();
+
+        if (! $guard->enabled()) {
+            return;
+        }
+
+        if ($missing = $guard->missingConfig()) {
+            $this->components->warn('Free-tier check is on but unconfigured. Missing: '.implode(', ', $missing));
+
+            return;
+        }
+
+        if (! $usage = $guard->usage()) {
+            $this->components->warn('Free-tier check is on, but Cloudflare usage could not be read.');
+
+            return;
+        }
+
+        $threshold = (float) config('r2-backup.free_tier.threshold', 0.10);
+        $low = $usage->remainingRatio() < $threshold;
+
+        $this->components->twoColumnDetail(
+            'R2 storage',
+            ($low ? '<fg=red>' : '<fg=green>').$usage->summary().'</>',
+        );
     }
 
     /**
