@@ -2,9 +2,11 @@
 
 namespace Riasath\R2Backup;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Config\Repository as Config;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 use Riasath\R2Backup\Console\RunBackupCommand;
 use Riasath\R2Backup\Http\Middleware\Authorize;
 
@@ -30,6 +32,8 @@ class R2BackupServiceProvider extends ServiceProvider
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'r2-backup');
 
         $this->registerRoutes();
+
+        $this->registerSchedule();
 
         if ($this->app->runningInConsole()) {
             $this->commands([RunBackupCommand::class]);
@@ -81,6 +85,91 @@ class R2BackupServiceProvider extends ServiceProvider
             'throw' => true,
             'report' => false,
         ]);
+    }
+
+    /**
+     * Schedule the backup command, so an application gets nightly backups from
+     * a config flag rather than by editing routes/console.php.
+     *
+     * Registered through callAfterResolving: the scheduler is only touched if
+     * something actually builds one, which keeps a plain web request from
+     * paying for a service it will never use.
+     */
+    protected function registerSchedule(): void
+    {
+        $settings = (array) $this->app->make('config')->get('r2-backup.schedule', []);
+
+        if (! ($settings['enabled'] ?? false)) {
+            return;
+        }
+
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule) use ($settings): void {
+            $time = static::normalizeTime((string) ($settings['time'] ?? '02:00'));
+
+            $event = $schedule->command('r2-backup:run');
+
+            match ($frequency = strtolower((string) ($settings['frequency'] ?? 'daily'))) {
+                'daily' => $event->dailyAt($time),
+                'weekly' => $event->weeklyOn((int) ($settings['day'] ?? 0), $time),
+                'monthly' => $event->monthlyOn((int) ($settings['day'] ?? 1), $time),
+                default => throw new InvalidArgumentException(
+                    "r2-backup.schedule.frequency is “{$frequency}”. Use daily, weekly or monthly."
+                ),
+            };
+
+            if ($timezone = $settings['timezone'] ?? null) {
+                $event->timezone($timezone);
+            }
+
+            // A dump that runs past the next slot must not have a second one
+            // start on top of it.
+            if ($settings['without_overlapping'] ?? true) {
+                $event->withoutOverlapping();
+            }
+
+            if ($settings['on_one_server'] ?? false) {
+                $event->onOneServer();
+            }
+        });
+    }
+
+    /**
+     * Turn a human-written time into the "HH:MM" the scheduler requires.
+     *
+     * "2:00 am", "2am", "2:00" and "02:00" all mean the same thing to a person
+     * writing a config file, and none but the last is what dailyAt() wants.
+     *
+     * @throws InvalidArgumentException on anything that is not a time
+     */
+    public static function normalizeTime(string $time): string
+    {
+        $value = trim($time);
+
+        if (! preg_match('/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i', $value, $matches)) {
+            throw new InvalidArgumentException(
+                "r2-backup.schedule.time is “{$time}”, which is not a time. Use 24-hour “02:00”, or “2:00 am”."
+            );
+        }
+
+        $hour = (int) $matches[1];
+        $minute = (int) ($matches[2] ?? 0);
+        $meridiem = strtolower($matches[3] ?? '');
+
+        if ($meridiem === 'pm' && $hour < 12) {
+            $hour += 12;
+        }
+
+        if ($meridiem === 'am' && $hour === 12) {
+            $hour = 0;
+        }
+
+        if ($hour > 23 || $minute > 59) {
+            throw new InvalidArgumentException(
+                "r2-backup.schedule.time is “{$time}”, which is not a real time of day."
+            );
+        }
+
+        return sprintf('%02d:%02d', $hour, $minute);
     }
 
     /**

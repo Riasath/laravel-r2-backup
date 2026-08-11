@@ -118,6 +118,64 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Automatic Backups
+    |--------------------------------------------------------------------------
+    |
+    | Turn this on and the package schedules itself — no need to add anything
+    | to routes/console.php. 'time' accepts "02:00", "2:00 am" or "2am"; it is
+    | normalised for you.
+    |
+    | This only works if Laravel's scheduler is actually running. One cron entry
+    | on the server drives every scheduled task in the app:
+    |
+    |     * * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1
+    |
+    | Check it registered with: php artisan schedule:list
+    |
+    | Set R2_BACKUP_KEEP before switching this on, or the bucket grows forever.
+    |
+    */
+
+    'schedule' => [
+
+        'enabled' => (bool) env('R2_BACKUP_SCHEDULE', false),
+
+        'time' => env('R2_BACKUP_TIME', '02:00'),
+
+        /*
+        | 'daily', 'weekly' or 'monthly'. Weekly and monthly both run at 'time'
+        | on the day named below.
+        */
+        'frequency' => env('R2_BACKUP_FREQUENCY', 'daily'),
+
+        /*
+        | Weekly: 0 (Sunday) through 6 (Saturday). Monthly: day of month, 1-31.
+        | Ignored when frequency is 'daily'.
+        */
+        'day' => env('R2_BACKUP_DAY'),
+
+        /*
+        | Timezone the time is read in. Null uses the app's own timezone — set
+        | this when your server runs UTC but you mean 2am local.
+        */
+        'timezone' => env('R2_BACKUP_TIMEZONE'),
+
+        /*
+        | Skip a run when the previous one is somehow still going, so a slow
+        | backup cannot have the next night's pile on top of it.
+        */
+        'without_overlapping' => true,
+
+        /*
+        | On a multi-server deployment, run on only one of them. Needs a cache
+        | driver with atomic locks (redis, memcached, database).
+        */
+        'on_one_server' => (bool) env('R2_BACKUP_ONE_SERVER', false),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Free Tier Guard
     |--------------------------------------------------------------------------
     |

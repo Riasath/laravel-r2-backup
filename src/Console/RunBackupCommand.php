@@ -3,6 +3,7 @@
 namespace Riasath\R2Backup\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 use Riasath\R2Backup\BackupService;
 use Riasath\R2Backup\Exceptions\BackupFailed;
 use Throwable;
@@ -41,10 +42,14 @@ class RunBackupCommand extends Command
         try {
             $result = $backups->run();
         } catch (BackupFailed $e) {
+            // Scheduled runs have nobody watching the console, so the log is
+            // the only place a failure can surface.
+            Log::error('R2 backup failed: '.$e->getMessage());
             $this->components->error($e->getMessage());
 
             return self::FAILURE;
         } catch (Throwable $e) {
+            Log::error('R2 backup failed unexpectedly.', ['exception' => $e]);
             $this->components->error('The backup failed: '.$e->getMessage());
 
             return self::FAILURE;

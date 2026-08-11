@@ -7,6 +7,7 @@ no local disk bloat, no `spatie/laravel-backup`-sized configuration surface.
 
 - **Ships a ready-made backup screen** — take a backup, list them, download, delete.
 - **Also an artisan command**, so the scheduler or a cron entry can drive it.
+- **Schedules itself** — flip one env var to get an automatic nightly backup at a time you choose.
 - **Constant memory** — the dump is streamed into gzip and streamed again on upload, so a
   20 GB database costs about as much RAM as a 20 MB one.
 - **MySQL, MariaDB and SQLite.**
@@ -213,16 +214,46 @@ php artisan r2-backup:run            # take a backup
 php artisan r2-backup:run --list     # show what is already stored
 ```
 
-### On a schedule
+### Automatic backups
 
-```php
-// routes/console.php
-use Illuminate\Support\Facades\Schedule;
+Turn it on in `.env` and the package schedules itself — nothing to add to `routes/console.php`:
 
-Schedule::command('r2-backup:run')->dailyAt('02:00');
+```dotenv
+R2_BACKUP_SCHEDULE=true
+R2_BACKUP_TIME="2:00 am"     # or "02:00", "2am", "14:30" — all understood
+R2_BACKUP_KEEP=14            # set this, or the bucket grows forever
 ```
 
-Set `R2_BACKUP_KEEP` to something sensible before you do this, or the bucket grows forever.
+Confirm it registered:
+
+```bash
+php artisan schedule:list
+```
+
+> **This only works if Laravel's scheduler is running.** One cron entry on the server drives
+> every scheduled task in the app — without it, nothing happens and nothing complains:
+>
+> ```cron
+> * * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1
+> ```
+
+Weekly and monthly work too:
+
+```dotenv
+R2_BACKUP_FREQUENCY=weekly   # daily (default), weekly, monthly
+R2_BACKUP_DAY=1              # weekly: 0=Sun..6=Sat · monthly: day of month
+R2_BACKUP_TIMEZONE=Asia/Dhaka  # when the server runs UTC but you mean 2am local
+```
+
+A run is skipped if the previous one is somehow still going, so a slow backup never has the next
+night's stacked on top of it. On a multi-server deployment set `R2_BACKUP_ONE_SERVER=true` so only
+one machine takes the backup (needs a cache driver with atomic locks).
+
+Scheduled runs go through the same code path as the command, so retention and the free-tier guard
+both apply, and **failures are written to your log** — nobody is watching the console at 2am.
+
+An invalid time is rejected at boot rather than quietly defaulting, so a typo cannot leave you
+believing backups are running when they are not.
 
 ### From your own code
 
